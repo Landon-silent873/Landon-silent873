@@ -10,6 +10,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -40,10 +41,23 @@ RETRY_BACKOFF_FACTOR: float = 1.0  # Exponential backoff base
 # Configuration Models (Pydantic)
 # ---------------------------------------------------------------------------
 class LoginConfig(BaseModel):
-    """Login credentials configuration."""
+    """Login credentials configuration.
+
+    Credentials can be provided via environment variables DIANXIAOMI_USERNAME
+    and DIANXIAOMI_PASSWORD, which take precedence over JSON config values.
+    """
 
     username: str = Field(description="DianXiaoMi account username")
     password: str = Field(description="DianXiaoMi account password")
+
+    def model_post_init(self, __context: Any) -> None:
+        """Override credentials with environment variables if set."""
+        env_username = os.environ.get("DIANXIAOMI_USERNAME")
+        env_password = os.environ.get("DIANXIAOMI_PASSWORD")
+        if env_username:
+            self.username = env_username
+        if env_password:
+            self.password = env_password
 
 
 class BrowserConfig(BaseModel):
@@ -265,11 +279,20 @@ class DianXiaoMiLister:
                     self.failure_count += 1
                     logger.error(f"商品上传失败: {product.folder_name} - {e}")
 
-                # Delay between products to avoid rate limiting
+                # Navigate back to fresh form before next product
                 if idx < len(products):
                     delay = self.config.upload.delay_between_products
                     logger.info(f"等待 {delay} 秒后继续下一个商品...")
                     await asyncio.sleep(delay)
+                    try:
+                        await self.navigate_to_shein_listing()
+                    except Exception as e:
+                        logger.error(f"导航到新表单失败: {e}，尝试继续...")
+                        # Attempt a page reload as fallback
+                        try:
+                            await self.page.reload(wait_until="networkidle")
+                        except Exception:
+                            pass
 
         finally:
             await self.close()
@@ -427,6 +450,39 @@ class DianXiaoMiLister:
 
         await self.submit_listing()
 
+    async def _fill_field(self, selector: str, value: str, label: str) -> None:
+        """
+        Generic helper to clear and fill a form field with retry logic.
+
+        Uses page.fill('') to reliably clear the field (works across SPA
+        frameworks), then types the value with realistic delays.
+
+        Args:
+            selector: CSS selector for the form field.
+            value: The text value to type into the field.
+            label: Human-readable field name for logging.
+        """
+        timeout = self.config.upload.wait_timeout
+        max_retries = self.config.upload.max_retries
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                await self.page.wait_for_selector(selector, timeout=timeout)
+                await self.page.fill(selector, "")  # Reliably clear field
+                await self.page.type(selector, value, delay=TYPING_DELAY_MS)
+                logger.info(f"已填写{label}: {value[:50]}{'...' if len(value) > 50 else ''}")
+                return
+            except Exception as e:
+                if attempt < max_retries:
+                    wait_time = RETRY_BACKOFF_FACTOR * (2 ** (attempt - 1))
+                    logger.warning(
+                        f"填写{label}失败，第{attempt}次尝试: {e}，"
+                        f"等待 {wait_time} 秒后重试"
+                    )
+                    await asyncio.sleep(wait_time)
+                else:
+                    raise RuntimeError(f"填写{label}最终失败（已重试{max_retries}次）: {e}")
+
     async def fill_title(self, title: str) -> None:
         """
         Fill the product title field.
@@ -434,27 +490,7 @@ class DianXiaoMiLister:
         Locates the title input, clears existing content, and types
         the new title with realistic delays.
         """
-        selector = self.config.selectors.title_input
-        timeout = self.config.upload.wait_timeout
-        max_retries = self.config.upload.max_retries
-
-        for attempt in range(1, max_retries + 1):
-            try:
-                await self.page.wait_for_selector(selector, timeout=timeout)
-                await self.page.click(selector, click_count=3)  # Select all
-                await self.page.type(selector, title, delay=TYPING_DELAY_MS)
-                logger.info(f"已填写标题: {title[:50]}...")
-                return
-            except Exception as e:
-                if attempt < max_retries:
-                    wait_time = RETRY_BACKOFF_FACTOR * (2 ** (attempt - 1))
-                    logger.warning(
-                        f"填写标题失败，第{attempt}次尝试: {e}，"
-                        f"等待 {wait_time} 秒后重试"
-                    )
-                    await asyncio.sleep(wait_time)
-                else:
-                    raise RuntimeError(f"填写标题最终失败（已重试{max_retries}次）: {e}")
+        await self._fill_field(self.config.selectors.title_input, title, "标题")
 
     async def fill_description(self, description: str) -> None:
         """
@@ -463,27 +499,7 @@ class DianXiaoMiLister:
         Locates the description textarea, clears existing content,
         and types the new description.
         """
-        selector = self.config.selectors.description_input
-        timeout = self.config.upload.wait_timeout
-        max_retries = self.config.upload.max_retries
-
-        for attempt in range(1, max_retries + 1):
-            try:
-                await self.page.wait_for_selector(selector, timeout=timeout)
-                await self.page.click(selector, click_count=3)  # Select all
-                await self.page.type(selector, description, delay=TYPING_DELAY_MS)
-                logger.info("已填写商品描述")
-                return
-            except Exception as e:
-                if attempt < max_retries:
-                    wait_time = RETRY_BACKOFF_FACTOR * (2 ** (attempt - 1))
-                    logger.warning(
-                        f"填写描述失败，第{attempt}次尝试: {e}，"
-                        f"等待 {wait_time} 秒后重试"
-                    )
-                    await asyncio.sleep(wait_time)
-                else:
-                    raise RuntimeError(f"填写描述最终失败（已重试{max_retries}次）: {e}")
+        await self._fill_field(self.config.selectors.description_input, description, "商品描述")
 
     async def fill_sku(self, sku: str) -> None:
         """
@@ -492,40 +508,22 @@ class DianXiaoMiLister:
         Locates the SKU input, clears existing content, and types
         the new SKU value.
         """
-        selector = self.config.selectors.sku_input
-        timeout = self.config.upload.wait_timeout
-        max_retries = self.config.upload.max_retries
-
-        for attempt in range(1, max_retries + 1):
-            try:
-                await self.page.wait_for_selector(selector, timeout=timeout)
-                await self.page.click(selector, click_count=3)  # Select all
-                await self.page.type(selector, sku, delay=TYPING_DELAY_MS)
-                logger.info(f"已填写SKU: {sku}")
-                return
-            except Exception as e:
-                if attempt < max_retries:
-                    wait_time = RETRY_BACKOFF_FACTOR * (2 ** (attempt - 1))
-                    logger.warning(
-                        f"填写SKU失败，第{attempt}次尝试: {e}，"
-                        f"等待 {wait_time} 秒后重试"
-                    )
-                    await asyncio.sleep(wait_time)
-                else:
-                    raise RuntimeError(f"填写SKU最终失败（已重试{max_retries}次）: {e}")
+        await self._fill_field(self.config.selectors.sku_input, sku, "SKU")
 
     async def upload_images(self, image_paths: List[Path]) -> None:
         """
         Upload product images using Playwright's set_input_files.
 
         Processes images sequentially, validates each file before upload,
-        and waits for upload completion.
+        and waits for upload completion. Includes retry logic for transient
+        DOM-ready races.
 
         Args:
             image_paths: List of Path objects pointing to image files.
         """
         selector = self.config.selectors.image_upload
         timeout = self.config.upload.wait_timeout
+        max_retries = self.config.upload.max_retries
 
         logger.info(f"开始上传 {len(image_paths)} 张图片...")
 
@@ -547,24 +545,35 @@ class DianXiaoMiLister:
             logger.warning("没有有效的图片可上传")
             return
 
-        try:
-            await self.page.wait_for_selector(selector, timeout=timeout)
-            # Upload all valid images at once using set_input_files
-            file_paths = [str(p.resolve()) for p in valid_paths]
-            await self.page.set_input_files(selector, file_paths)
+        for attempt in range(1, max_retries + 1):
+            try:
+                await self.page.wait_for_selector(selector, timeout=timeout)
+                # Upload all valid images at once using set_input_files
+                file_paths = [str(p.resolve()) for p in valid_paths]
+                await self.page.set_input_files(selector, file_paths)
 
-            # Wait for uploads to process
-            await asyncio.sleep(2)
-            logger.info(f"已上传 {len(valid_paths)} 张图片")
-
-        except Exception as e:
-            raise RuntimeError(f"图片上传失败: {e}")
+                # Wait for uploads to process
+                await asyncio.sleep(2)
+                logger.info(f"已上传 {len(valid_paths)} 张图片")
+                return
+            except Exception as e:
+                if attempt < max_retries:
+                    wait_time = RETRY_BACKOFF_FACTOR * (2 ** (attempt - 1))
+                    logger.warning(
+                        f"图片上传失败，第{attempt}次尝试: {e}，"
+                        f"等待 {wait_time} 秒后重试"
+                    )
+                    await asyncio.sleep(wait_time)
+                else:
+                    raise RuntimeError(f"图片上传最终失败（已重试{max_retries}次）: {e}")
 
     async def submit_listing(self) -> None:
         """
         Click the submit button and wait for confirmation or error.
 
-        Handles common errors: duplicate SKU, missing fields, upload failures.
+        Uses scoped selectors (toast/modal) for result detection instead of
+        searching the entire page body, which avoids false positives from
+        unrelated page content like navigation menus or sidebar labels.
         """
         selector = self.config.selectors.submit_button
         timeout = self.config.upload.wait_timeout
@@ -577,32 +586,57 @@ class DianXiaoMiLister:
         except Exception as e:
             raise RuntimeError(f"无法点击提交按钮: {e}")
 
-        # Wait for response
+        # Wait for a toast/modal response indicator (scoped detection)
+        toast_selectors = [
+            ".toast-success",
+            ".ant-message-success",
+            ".el-message--success",
+            ".ant-notification-notice",
+            ".toast-error",
+            ".ant-message-error",
+            ".el-message--error",
+            ".modal-body",
+            ".ant-modal-content",
+        ]
+        combined_selector = ", ".join(toast_selectors)
+
         try:
-            await self.page.wait_for_timeout(3000)
+            # First, try to detect a scoped toast/modal element
+            toast = await self.page.wait_for_selector(
+                combined_selector, timeout=5000
+            )
+            if toast:
+                toast_text = await toast.text_content() or ""
+                if "成功" in toast_text or "success" in toast_text.lower():
+                    logger.info("商品提交成功")
+                    return
+                if "重复" in toast_text or "duplicate" in toast_text.lower():
+                    raise RuntimeError("提交失败: SKU重复")
+                if "必填" in toast_text or "required" in toast_text.lower():
+                    raise RuntimeError("提交失败: 存在未填写的必填字段")
+                if ("图片" in toast_text and "失败" in toast_text):
+                    raise RuntimeError("提交失败: 图片上传异常")
+                # Toast appeared but content not recognized
+                logger.warning(f"检测到提示框但内容未识别: {toast_text[:100]}")
+        except Exception:
+            # No toast found within 5s, fall through to URL/network check
+            pass
 
-            # Check page content for success/error indicators
-            page_content = await self.page.text_content("body") or ""
-
-            if "成功" in page_content or "success" in page_content.lower():
-                logger.info("商品提交成功")
+        # Fallback: check if URL changed (indicating successful navigation)
+        try:
+            await self.page.wait_for_timeout(2000)
+            current_url = self.page.url
+            if "success" in current_url or "result" in current_url:
+                logger.info("商品提交成功（通过URL跳转确认）")
                 return
+        except Exception:
+            pass
 
-            # Check for common errors
-            if "重复" in page_content or "duplicate" in page_content.lower():
-                raise RuntimeError("提交失败: SKU重复")
-            if "必填" in page_content or "required" in page_content.lower():
-                raise RuntimeError("提交失败: 存在未填写的必填字段")
-            if "图片" in page_content and "失败" in page_content:
-                raise RuntimeError("提交失败: 图片上传异常")
-
-            # If no clear indicator, assume success with warning
-            logger.warning("提交后未检测到明确的成功/失败标识，默认视为成功")
-
-        except RuntimeError:
-            raise
-        except Exception as e:
-            raise RuntimeError(f"提交后等待响应失败: {e}")
+        # Final fallback: assume success with clear warning
+        logger.warning(
+            "提交后未检测到明确的成功/失败标识（toast/modal/URL均无响应），"
+            "默认视为成功，请手动确认"
+        )
 
     async def close(self) -> None:
         """Close browser and clean up resources."""
