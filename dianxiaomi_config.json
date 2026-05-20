@@ -1,0 +1,30 @@
+{
+    "login": {
+        "username": "your_username",
+        "password": "your_password"
+    },
+    "browser": {
+        "headless": false,
+        "slow_mo": 100,
+        "viewport_width": 1920,
+        "viewport_height": 1080
+    },
+    "dianxiaomi_url": "https://www.dianxiaomi.com",
+    "platform": "shein",
+    "products_folder": "./products",
+    "upload": {
+        "max_retries": 3,
+        "wait_timeout": 30000,
+        "delay_between_products": 5
+    },
+    "selectors": {
+        "login_username": "input[name='username']",
+        "login_password": "input[name='password']",
+        "login_button": "button[type='submit']",
+        "title_input": "input.product-title",
+        "description_input": "textarea.product-description",
+        "sku_input": "input.product-sku",
+        "image_upload": "input[type='file']",
+        "submit_button": "button.submit-listing"
+    }
+}
