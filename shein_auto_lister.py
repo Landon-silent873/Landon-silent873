@@ -45,6 +45,24 @@ from title_generator import generate_title, generate_description
 # ---------------------------------------------------------------------------
 SCRIPT_VERSION: str = "1.0.0"
 
+
+def detect_color_from_folder(folder_name: str) -> str:
+    """
+    Detect color prefix from a product subfolder name.
+
+    If the folder name contains 'black' (case-insensitive), return 'B'.
+    Otherwise, return 'W'.
+
+    Args:
+        folder_name: Name of the product subfolder.
+
+    Returns:
+        Color prefix string ('B' or 'W').
+    """
+    if "black" in folder_name.lower():
+        return "B"
+    return "W"
+
 # ---------------------------------------------------------------------------
 # Logging setup
 # ---------------------------------------------------------------------------
@@ -83,9 +101,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--color",
         type=str,
-        required=True,
+        required=False,
+        default=None,
         choices=list(COLOR_PREFIXES.keys()),
         help="颜色前缀 (W=白色, B=黑色)",
+    )
+    parser.add_argument(
+        "--auto-color",
+        action="store_true",
+        default=False,
+        help="自动根据商品子文件夹名判断颜色（包含black/Black则为B，否则为W）",
     )
     parser.add_argument(
         "--base-product-id",
@@ -99,7 +124,10 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_CDP_URL,
         help=f"Chrome DevTools Protocol URL (默认: {DEFAULT_CDP_URL})",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if not args.auto_color and not args.color:
+        parser.error("必须指定 --color 或 --auto-color 其中一个")
+    return args
 
 
 async def random_delay(min_seconds: float = DEFAULT_DELAY_MIN, max_seconds: float = DEFAULT_DELAY_MAX) -> None:
@@ -545,7 +573,8 @@ async def main_async(args: argparse.Namespace) -> None:
 
     folder_path = Path(args.folder).resolve()
     category_code = args.category
-    color_prefix = args.color
+    auto_color = args.auto_color
+    color_prefix = args.color  # May be None when --auto-color is used
     base_product_id = args.base_product_id
     # Use config cdp_url as base default; CLI arg overrides only if explicitly provided
     cdp_url = args.cdp_url if args.cdp_url != DEFAULT_CDP_URL else config.get("cdp_url", DEFAULT_CDP_URL)
@@ -563,7 +592,10 @@ async def main_async(args: argparse.Namespace) -> None:
     logger.info(f"  版本: {SCRIPT_VERSION}")
     logger.info(f"  商品文件夹: {folder_path}")
     logger.info(f"  类别: {get_category_name(category_code)} ({category_code})")
-    logger.info(f"  颜色: {get_color_name(color_prefix)} ({color_prefix})")
+    if auto_color:
+        logger.info("  颜色: 自动识别模式（根据文件夹名判断）")
+    else:
+        logger.info(f"  颜色: {get_color_name(color_prefix)} ({color_prefix})")
     logger.info(f"  基础商品ID: {base_product_id}")
     logger.info(f"  CDP地址: {cdp_url}")
     logger.info(f"  价格: ${price}")
@@ -611,8 +643,14 @@ async def main_async(args: argparse.Namespace) -> None:
             logger.info(f"{'─' * 40}")
 
             try:
+                # Determine color prefix for this product
+                effective_color = color_prefix
+                if auto_color:
+                    effective_color = detect_color_from_folder(subfolder.name)
+                    logger.info(f"  自动识别颜色: {get_color_name(effective_color)} ({effective_color})")
+
                 success = await process_single_product(
-                    page, subfolder, category_code, color_prefix,
+                    page, subfolder, category_code, effective_color,
                     base_product_id, price, sizes
                 )
                 if success:
