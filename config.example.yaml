@@ -1,0 +1,51 @@
+# SHEIN Auto-Lister Configuration File
+# Copy this file to config.yaml and modify as needed.
+# Any values set here will override the default settings.
+
+# Product price in USD
+price: 20.0
+currency: "USD"
+
+# Available sizes for all products
+sizes:
+  - "S"
+  - "M"
+  - "L"
+  - "XL"
+  - "XXL"
+  - "XXXL"
+
+# Random delay range (seconds) between automation actions
+# Mimics human behavior to avoid detection
+delay_min: 1.0
+delay_max: 3.0
+
+# Chrome DevTools Protocol URL
+# This is the WebSocket URL used to connect to your running Chrome browser
+cdp_url: "ws://127.0.0.1:9222"
+
+# Color prefix mapping
+# W = White, B = Black
+color_prefixes:
+  W: "White"
+  B: "Black"
+
+# Category code mapping
+# Each code corresponds to a product type
+category_codes:
+  "3001": "Short-Sleeve T-Shirt"
+  "8008": "Hoodie"
+  "ady000": "Crewneck Sweatshirt"
+
+# Image file patterns to search for in product folders
+# Images are uploaded in sorted order (Main-01, Main-02, etc.)
+image_patterns:
+  - "Main-*.jpg"
+  - "Main-*.png"
+  - "Main-*.jpeg"
+  - "Main-*.webp"
+
+# SHEIN Seller Center URLs
+seller_center_url: "https://seller.shein.com"
+product_list_url: "https://seller.shein.com/product/list"
+publish_url: "https://seller.shein.com/product/publish"
