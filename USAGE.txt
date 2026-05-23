@@ -1,0 +1,16 @@
+=== SHEIN Auto-Lister - Quick Start Guide ===
+
+FIRST TIME SETUP:
+1. Double-click "install.bat" to install dependencies
+2. Double-click "create_shortcut.bat" to create desktop shortcuts
+
+DAILY USAGE:
+1. Double-click "SHEIN Chrome" on your desktop (opens Chrome with debug mode)
+2. Log in to SHEIN seller center (https://seller.shein.com)
+3. Double-click "SHEIN Auto Upload" on your desktop
+4. Done! The script handles everything automatically.
+
+IMPORTANT:
+- Always use "SHEIN Chrome" to open Chrome (not the regular Chrome icon)
+- Your bookmarks, passwords, and login state are preserved
+- Make sure all other Chrome windows are closed before opening "SHEIN Chrome"

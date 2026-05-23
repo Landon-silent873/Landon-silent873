@@ -21,7 +21,6 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 SCRIPT_DIR = Path(__file__).parent.resolve()
 IMAGE_DIR = r"D:\A今日上架"
-CHROME_PATH = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
 CDP_PORT = 9222
 BASE_PRODUCT_ID_TSHIRT = "SPMPA4202605222803370"
 BASE_PRODUCT_ID_HOODIE = "SPMPA4202605222803370"
@@ -68,44 +67,33 @@ def is_port_open(port):
 
 
 def start_chrome_debug():
-    """Start Chrome in remote debugging mode if not already running."""
+    """Check if Chrome remote debugging is available."""
     if is_port_open(CDP_PORT):
-        print(f"[OK] Chrome remote debugging already running (port {CDP_PORT})")
+        print(f"[OK] Chrome remote debugging detected (port {CDP_PORT})")
         return True
 
-    print(f"[INFO] Starting Chrome with remote debugging on port {CDP_PORT}...")
-    chrome_path = Path(CHROME_PATH)
-    if not chrome_path.exists():
-        print(f"[ERROR] Chrome not found at: {CHROME_PATH}")
-        print("        Please install Chrome or update CHROME_PATH in launcher.py")
-        return False
+    print(f"[WARNING] Chrome remote debugging not detected on port {CDP_PORT}")
+    print()
+    print("  Please follow these steps:")
+    print("  1. Close ALL Chrome windows completely")
+    print("  2. Double-click 'chrome_debug.bat' (or 'SHEIN Chrome' on desktop)")
+    print("  3. Log in to SHEIN seller center in the browser")
+    print("  4. Come back here and press Enter")
+    print()
 
-    user_data_dir = os.path.join(os.environ.get("USERPROFILE", ""), "chrome-debug-profile")
-    try:
-        subprocess.Popen(
-            [
-                str(chrome_path),
-                f"--remote-debugging-port={CDP_PORT}",
-                f"--user-data-dir={user_data_dir}",
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        print("[INFO] Waiting for Chrome to start (5 seconds)...")
-        import time
-        time.sleep(5)
+    while True:
+        try:
+            input("Press Enter after Chrome is ready...")
+        except (EOFError, KeyboardInterrupt):
+            return False
 
         if is_port_open(CDP_PORT):
-            print(f"[OK] Chrome started successfully on port {CDP_PORT}")
+            print(f"[OK] Chrome remote debugging detected (port {CDP_PORT})")
             return True
         else:
-            print("[WARNING] Chrome may not have started properly.")
-            print("          Please start Chrome manually with:")
-            print(f'          "{CHROME_PATH}" --remote-debugging-port={CDP_PORT}')
-            return False
-    except Exception as e:
-        print(f"[ERROR] Failed to start Chrome: {e}")
-        return False
+            print("[WARNING] Still not detected. Make sure you used chrome_debug.bat to open Chrome.")
+            print("          (Normal Chrome shortcut won't work)")
+            print()
 
 
 def run_lister(folder, category_code, color=None, auto_color=False, base_product_id=None):
